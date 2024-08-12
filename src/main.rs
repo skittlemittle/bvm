@@ -4,6 +4,13 @@
  the tape itself wraps around from the end to the start
 */
 
+use std::{
+    env,
+    fs::File,
+    io::{self, BufRead, BufReader, Read},
+    path::Path,
+};
+
 struct MachineState {
     tape: [u8; 30_000],
     pointer: usize,
@@ -17,7 +24,7 @@ impl MachineState {
         }
     }
 
-    pub fn print_tape(self: MachineState, till: usize) {
+    pub fn print_tape(self: &MachineState, till: usize) {
         let stop = if self.tape.len() < till {
             self.tape.len()
         } else {
@@ -25,13 +32,16 @@ impl MachineState {
         };
 
         for cell in 0..stop {
-            print!("{} ", self.tape[cell]);
+            if cell == self.pointer {
+                print!("\x1b[96m\x1b[1m{}\x1b[0m ", self.tape[cell]);
+            } else {
+                print!("{} ", self.tape[cell]);
+            }
         }
         println!("");
     }
 }
 
-// TODO: slow!, prematch the [] before even running!
 fn seek_closing_brace(commands: &Vec<char>, mut i_pointer: usize) -> Result<usize, VMError> {
     let mut stack: Vec<char> = vec![];
 
@@ -55,10 +65,22 @@ fn seek_closing_brace(commands: &Vec<char>, mut i_pointer: usize) -> Result<usiz
 }
 
 fn main() {
-    //let commands: Vec<char> = vec!['+', '+', '>', '+', '+', '[', '-', ']', 'i'];
-    let program = String::from("++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.");
+    // load the program
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("{} <filename>", args[0]);
+        std::process::exit(1);
+    }
+
+    let reader = BufReader::new(File::open(Path::new(&args[1])).unwrap());
+    let mut program = String::new();
+
+    for line in reader.lines() {
+        program.push_str(&line.unwrap());
+    }
     let commands: Vec<char> = program.chars().collect();
 
+    // the actual interpreter
     let mut machine = MachineState::new();
     let mut cmd_stack: Vec<usize> = vec![];
     let mut i_pointer: usize = 0;
@@ -66,7 +88,8 @@ fn main() {
     while i_pointer < commands.len() {
         match commands[i_pointer] {
             '+' => {
-                machine.tape[machine.pointer] += 1;
+                machine.tape[machine.pointer] =
+                    (machine.tape[machine.pointer] + 1) % u8::max_value();
                 i_pointer += 1;
             }
             '-' => {
@@ -96,7 +119,15 @@ fn main() {
                 );
                 i_pointer += 1;
             }
-            ',' => i_pointer += 1,
+            ',' => {
+                let mut b = [0];
+                match io::stdin().read_exact(&mut b) {
+                    Ok(_) => machine.tape[machine.pointer] = b[0],
+                    Err(_) => panic!("IO ERROR: failed to read input"),
+                };
+
+                i_pointer += 1;
+            }
             '[' => {
                 if machine.tape[machine.pointer] == 0 {
                     match seek_closing_brace(&commands, i_pointer + 1) {
@@ -112,10 +143,16 @@ fn main() {
                 Some(p) => i_pointer = p,
                 None => panic!("SYNTAX ERROR: unmatched ] at {}", i_pointer),
             },
+            '#' => {
+                println!("STATE at command {}", i_pointer);
+                MachineState::print_tape(&machine, 30); // TODO: magic number
+                i_pointer += 1;
+            }
             _ => i_pointer += 1,
         }
     }
-    MachineState::print_tape(machine, 30);
+    println!("\nFINAL TAPE: ");
+    MachineState::print_tape(&machine, 30);
 }
 
 #[derive(Debug)]
